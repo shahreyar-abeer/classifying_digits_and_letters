@@ -1,0 +1,598 @@
+---
+title: "Report"
+author: "Joe"
+date: "29 July 2018"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    fig_caption: yes
+    includes:
+      in_header: pos-h.tex
+  word_document: default
+fontsize: 11pt
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	fig.pos = 'h',
+	comment = "  "
+)
+```
+
+
+# Introduction:
+
+
+
+# Section 1: Creating dataset
+
+
+# Section 2: Feature Engineering
+
+This section is done in **Python**.
+
+A list is used to store all the images. Each element of the list is a numpy ndarray. Each ndarray contains 10 $16\times16$ images. This made the calculations rather easy to perform as all the images could be handled at once.
+
+The first few features are pretty straightforward and calculated using numpy functions.
+The logic of neighbours of pixels was a bit tricky and it took some thinking to code it. Nonetheless the features involving neighbours have been calculated perfectly.
+One feature, namely *nr_eyes* is not calculated. It is rather hard to express the logic in Pythonic terms and so a random number from 1 to 5 is used as instructed.
+
+The feature *bd* is calculated in the following way.
+At first the column with the highest number of black pixels is obtained. This represents the **|** of b and d. Then, we take the difference of the total black pixels to the right of that column with the total black pixels to the left of the column. So, in case of *'b'*, this feature would be a positive value and in case of *'d'* it would be negative. This will hopefully be a good feature to distinguish between b and d.  
+The custom feature is sparsity, the product of height and width divided by the total number of black pixels. Some characters, like 1, will be less sparse. On the other hand, 7 should be more sparse. So this feature should be able to distinguish between these two. Combinded with the other features, this should work quite well.
+
+
+
+# Section 3: Statistical Analysis
+
+In this section, we will perform statistical analyses of the feature data, in order to explore which features are important for distinguishing between different kinds of characters. It is done in **R**.
+
+
+## 3.1
+
+At first, we have a look at the descriptive statistics of all the features.
+
+```{r}
+source('./code_section3.R')
+source('./code_section4.R')
+
+print_pander(descriptives(data),
+                title = 'Descriptive Statistics of the features')
+```
+
+It is seen that the average number of black pixels is about 20 but varies greatly.
+Let us have a look at the boxplots to understand the distribution of the features a bit more clearly.  
+
+```{r,fig.cap='Boxplots of the features'}
+print(boxer('all'))
+```  
+
+The descriptive statistics and boxplots for the letters and digits seperated should reveal some interesting information. 
+
+```{r}
+digits_ds = descriptives(digits)
+letters_ds = descriptives(letters)
+merged = merge(digits_ds, letters_ds, by = 'feature')
+colnames(merged) = c("feature", "mean_digits", "sd_digits", "mean_letters",
+                     "sd_letters")
+
+print_pander(merged,
+             title = 'Descriptive Statistics by digits and letters')
+```
+
+
+
+A great difference between the letters and digits can be seen in case of the feature *bd*. There are also some notable differences among *number of pixels, neigbours with 3 plus* etc.
+
+
+```{r,fig.cap='Boxplots by type(digit/ letter)'}
+print(boxer('by type'))
+```
+
+## 3.2
+
+The plot of correlation matrix shows the correlations of the variables with each other.
+
+```{r,fig.cap='Correlation Matrix',fig.show='asis'}
+corrplotter(data[, -c(1, 19)])
+```
+
+It is observed that there are some highly correlated features. The correlation matrix is showing only the significant ones. So, there is a strong significant correlation between (width & tallness), (none_before & none_after), (height and none_after) and some other pairs as well. Correlated variables will introduce multicollinearity. If two variables are highly correlated, it is a burden to keep both of them in the analysis. So we remove feature that are highly correlated with others or have a moderate correlation with some of the features. In such a case, the omitted features are *nr_pix, width, rows_with_1, neigh_1, none_above, none_before, none_after and custom*. The rest of the analysis will be carried on without these features. Let's now have a look at the correlation matrix.
+
+```{r, fig.cap='Correlation matrix of reduced features'}
+data_reduced = data[, -c(2, 4, 6, 10, 13, 14, 15, 18)]
+corrplotter(data_reduced[, -c(1, 11)])
+```
+
+
+So the correlations are weak among these features. These features can now be used to build models in order to do classification.
+
+## 3.3
+
+We now look for features that can identify the different letters i.e. the featues will have different values for different letters. For example, let us consider the feature *height*.
+
+```{r}
+letters = data[data$type == 'letter', ]
+summ = as.data.frame(summarize(letters$height, letters$label, mean))
+colnames(summ) = c('letter', 'height')
+print_pander(summ, 'Mean heights of the letters')
+```
+
+It is observed that *'a'* has a mean height of 8.5, *'b'* has mean height of 9.3 and so on.
+We want to find out whether the difference between the heights of the letters is significant or is it just by chance. For this purpose, we may use one-way ANOVA since there are more than two groups to compare.
+
+We are testing the hypothesis:
+
+
+**H~0~: There is no difference in the mean heights of the letters** vs    
+**H~1~: There is difference among the mean heights of the letters**
+
+In order to use ANOVA it needs to satisfy some assumptions,
+
+1. Samples are independent.
+2. Experimental errors i.e residuals are normally distributed.
+3. Homogeneity of variance, homoscedasticity.
+
+We need to test whether these assumptions are met before using the test.
+
+The first assumption can be understood intuitively, the samples are independent, there is no dependency of 'a' with 'b'.
+We need to draw a qqplot to check whether the distribution of the residuals is normal to check the second assumption.
+
+```{r,fig.cap='qqplot of residuals'}
+fit_height = lm(height~label, data = letters)
+qqnorm(fit_height$residuals)
+qqline(fit_height$residuals)
+```
+
+The more points on the line, the more normal the distribution. The qqplot suggests that the distribution of the residuals may not be normal. We need to perform a test, namely *Shapiro-Wilk's normality test* to test for normality.
+
+```{r}
+sh = shapiro.test(fit_height$residuals)
+df_shapiro = data.frame(sh[1], sh[2])
+print_pander(df_shapiro, 'Shapiro-Wilk normality test')
+```
+
+The test gives a p-value of .09 which indicates that the distribution of the residuals can be considered normal at the 5% level.
+The third assumption can be checked using the *Levene's Test for homogeneity of variance(based on median)*
+
+```{r}
+lev = leveneTest(height~label, data = letters)
+df_lev = data.frame(lev)
+print_pander(df_lev, "Levene's Test for Homogeneity of Variance")
+```
+
+This test gives a p-value of .03 indicating that the variance is not homogeneous among the samples and thus the assumption of homogeneity of ANOVA is violated. We cannot perform ANOVA if any one of the assumptions is violated. An alternative to ANOVA is the *Kruskal-Wallis rank sum test* which is a non-parametric test and thus it doesn't have the drawback of assumptions like in ANOVA. We will use this test.
+
+```{r}
+kr = kruskal.test(height~label, data = letters)
+df_kr = data.frame(kr[1], kr[2], kr[3])
+print_pander(df_kr, 'Kruskal-Wallis rank sum test')
+```
+
+This gives the p-value of .011 and thus we may reject the null hypothesis and conclude that there is significant difference between the mean heights of the letters.
+
+```{r}
+print_pander(assumptions(letters),
+            title = "Tests of normality and homogeneity for each
+            feature")
+```
+
+It is observed that all but 4 of the features get rejected in either or both of the tests. Thus the non-parametric *Kruskal-Wallis test* is used to check for differences among the letters. It is summarized in the following table.
+We are testing:
+
+**H~0~: There is no difference among the values of feature~i~ for the five letters** vs  
+**H~1~: There is difference among the values**
+
+
+```{r}
+print_pander(multiple_test(letters),
+            'Significant features to distinguish among letters')
+```
+
+So we have 13 features that have significant differences and may be used to identify the letters.
+
+## 3.4
+
+We perform a similar test as in the previous section just with digits instead of letters. So our hypothesis is:
+
+**H~0~: There is no difference among the values of feature~i~ for the five digits** vs  
+**H~1~: There is difference among the values**
+
+
+```{r}
+digits = data[data$type == 'digit', ]
+```
+```{r}
+print_pander(multiple_test(digits),
+      title = 'Significant features to distiguish among
+      digits')
+```
+
+We have 14 features with significant differences that can be used to build models to identify the digits seperately.
+
+
+## 3.5
+
+In this case we are to perform a two sample comparison between digits and letters for each of the features. We are trying to observe if there is any difference in the features of digits and letters. This could have been accomplished by the two-sample t-test, but there is the assumption of normality. Let us the check the normality of the features of the letters using qqplot.
+
+```{r,fig.cap='QQ-Plots to check normality'}
+par(mfrow = c(2, 4))
+for( i in 3:10){
+  qqnorm(letters[, i], main = colnames(letters)[i])
+  qqline(letters[, i])
+}
+
+par(mfrow = c(2, 4))
+for( i in 11:18){
+  qqnorm(letters[, i], main = colnames(letters)[i])
+  qqline(letters[, i])
+}
+```
+
+Most of the features deviate from the assumption of normality. Therefore, the *Mann-Whitney U test*, a non-parametric counterpart of the two sample t-test will be used. This test holds even when the assumption of normality is violated.
+
+The hypothesis we are testing is:
+
+**H~0~: There is no difference between the features of digits and letters ** vs  
+**H~1~: There is difference between the features**
+
+
+```{r}
+print_pander(two_sample(digits, letters),
+      title = 'Significant features to distiguish between
+      digits and letters')
+```
+
+
+There are 8 features, *bd* being the most significant.
+
+## 3.6
+
+We treat the two digits '1' and '7' as two samples and perform a two-sample test, the *Mann-Whitney test*.
+
+```{r}
+one_df = data[data$label == '1', ]
+seven_df = data[data$label == '7', ]
+```
+```{r}
+print_pander(two_sample(one_df, seven_df), 'Features
+            to differentiate between 1 and 7')
+```
+
+So we see a large number of features to differentiate between '1' and '7'.
+
+## 3.7
+
+A similar test is performed for 'b' and 'd'.
+
+```{r}
+b_df = data[data$label == 'b', ]
+d_df = data[data$label == 'd', ]
+```
+```{r}
+print_pander(two_sample(b_df, d_df), 'Features to differentiate
+            between b and d')
+```
+
+Only two features have a significant difference among 'b' and 'd'. One of which is the custom feature *bd*.
+
+## 3.8
+
+It is required to test the pairs of digits that have a significant difference for each feature. At first, we need to perform *Kruskal-Wallis rank sum test* to check whether there are differences among the digits for a particular feature( done in section 3.4). If the test is rejected, then we will do multiple comparisons using *Mann-Whitney U test* keeping in mind the correction for multiple comparisons. We will be using the *Bonferroni* adjustment in this case. For example, let's consider the feature height. We know from 3.4 that the digits differ in case of height. But we don't know which digits differ. So the following table gives the pairwaise test result:
+
+```{r}
+height_digit = pairwise.wilcox.test(digits$height,
+                                    digits$label,
+                                    p.adjust.method = 'bonf')
+```
+```{r}
+print_pander(height_digit[[3]], "Pairwise comparisons 
+            using Mann Whitney U test for the feature height")
+```
+
+
+So we observe that the pairs *(1, 4), (1, 5), (4, 7), (5, 7)* are significant, since the p-value is less than .05  
+Thus these pairs differ in case of height.
+
+This is done for all the features and the results are printed in a single table as given below. Note that only the significant pairs for each feature are shown in the table.
+
+We are testing the hypotheses:
+
+**H~0~: There is no difference between the pairs of digits for feature~i~** vs  
+**H~1~: There is difference between paris of digits for feature~i~**
+
+
+```{r}
+sig_features = as.character(multiple_test(digits)[, 1])
+s1 = sig_features[1:7]
+s2 = sig_features[8:14]
+feat_pairs1 = features_pairs(s1, digits)
+feat_pairs2 = features_pairs(s2, digits)
+print_features_pairs(feat_pairs1, "Pairs of digits having 
+                     significant differences by feature")
+print_features_pairs(feat_pairs2, "Pairs of digits having 
+                     significant differences by feature(contd)")
+```
+
+So let's take an example. For the *height* feature, significant differences are seen between digits *1 and 4*, *1 and 5*, *3 and 7*, and *4 and 7*. The rest of the table is to be interpreted in a similar fashion.
+
+## 3.9
+
+A similar test as above is performed in case of the letters as well.
+The hypothesis stays almost the same, we are doing this for the letters in place of the digits. The results are as follows:
+
+```{r}
+sig_features = as.character(multiple_test(letters)[, 1])
+s1 = sig_features[1:7]
+s2 = sig_features[8:13]
+feat_pairs1 = features_pairs(s1, letters)
+feat_pairs2 = features_pairs(s2, letters)
+print_features_pairs(feat_pairs1, "Pairs of letters having 
+                     significant differences by feature")
+print_features_pairs(feat_pairs2, "Pairs of letters having 
+                     significant differences by feature(contd)")
+```
+
+So the letters *b, c* and *c, d* differ in case of height, which is pretty intuitive. 
+
+
+## 3.10
+
+The best feature for distinguishing between the letters and digits is *bd* as observed in section 3.5
+
+```{r,fig.cap="Density plots of digits and letters for the feature bd"}
+ggplot(data, aes(bd)) + 
+  geom_density(aes(fill = type, color = type), alpha=.5) +
+  geom_vline(xintercept = 8.6, color = 'red') + 
+  annotate('text', label = 'x = 8.6', x = 5, y = .05, color = 'red')
+```
+
+The above figure is a density plot showing the density of feature bd for the digits and letters simultaneously. The two densities intersect at $bd = 8.6$  
+We may select this intersecting point as the threshold to predict digits and letters. Any character having a bd value less than 8.6 would be classified as a digit and any character with value 8.6 or greater would be a letter. Since the two densities are somewhat divided at the intersecting point, so this value is chosen for the purpose.  
+Let us see how this classification performs.
+
+```{r}
+data$predictions = ifelse(data$bd < 8.6, "digit", "letter")
+t = table(data$predictions, data$type, dnn = c("predicted", "actual"))
+```
+```{r}
+print_pander(t, "Confusion Matrix of classification based on bd")
+```
+
+We observe that out of the 50 digits, our algorithm classified 39 correctly and out of 50 letters, it classified 38 correctly. This gives an accuracy score of $(39 + 38)/100 = .77$ or 77%!  
+This is quite good given the pure simplicity of the model.
+
+
+
+
+# Section 4: Machine Learning
+
+In this section we will use the features developed and analysed in the previous sections to solve classification problems. We will fit classifiers to the image data in order to build and evaluate models that can predict the classes.
+
+
+
+
+
+## 4.1
+
+The best feature we selected is *bd*. A logistic regeression model is fit in order to categorize digits and letters based on the feature bd.  
+The model is as follows:
+
+```{r Summary Logistic model} 
+model = glm(type~bd, data = data, family = binomial(link = 'logit'))
+s = summary(model)
+print(s[1])
+```
+```{r}
+print_pander(s[[12]], "Coefficients of the model")
+```
+
+The output shows that *bd* has a significant p-value that is it is indeed a feature based on which the digits and letters can be sorted.
+
+```{r}
+print_pander(contrasts(data$type), "Contrasts")
+```
+
+
+The contrasts are so arranged that 'digit' is denoted by 0 and 'letter' by 1. So the coefficient is 0.115 indicates that for an unit increase in *bd*, the log odds of the probability that the character is a letter increses by 0.115
+
+A 5-fold cross validation is used to evaluate the accuracy of the model.
+
+```{r}
+ctrl = trainControl(method = 'repeatedcv', number = 5, savePredictions = T)
+model1 = train(type ~ bd, data = data, method = "glm", family = "binomial",
+              trControl = ctrl)
+
+pred1 = predict(model1)
+conf1 = confusionMatrix(pred1, data$type)
+```
+```{r}
+print_pander(conf1[[2]], "Confusion Matrix of 5-fold 
+             cross validated logit model(single feature)")
+```
+
+
+The accuracy of the model is reported as .74 and thus the model predicts the correct outcome 74% of the time. On $18$ cases, it has predicted a digit falsely as a letter. And on $8$ instances, the model has wrongly classified a letter as a digit.
+
+## 4.2
+
+We select the five features from the reduced data from 3.2  
+We select the features for which there is significant difference between the digits and letters. Also, there should be no correlation among the features themselves. Let us run our test from 3.5 to get the features.
+
+
+
+```{r}
+print_pander(two_sample(digits_reduced, letters_reduced), 
+            "Features that can distinguish between digits and letters")
+```
+
+
+
+We select the feature *bd* even though its not in the list, as it was the best feature to distinguish between digits and letters. Thus the selected features are *bd, height, width, cols_with_1 and neigh_1*  
+We fit the logistic regression model with these five features. The model and the summary is given below
+
+```{r}
+model2 = train(type ~ bd + height + cols_with_1 + neigh_1 + width,
+               data = data, method = "glm", family = "binomial",
+               trControl = ctrl)
+pred2 = predict(model2)
+conf2 = confusionMatrix(pred2, data$type)
+print(model2[7])
+print_pander(summary(model2)[[11]], "Summary of the model")
+```
+```{r}
+print_pander(conf2[[2]], "Confusion Matrix of 5-fold 
+            cross validated logit model(five features)")
+```
+
+We observe that the coefficients of height and neigh_1 are insignificant at the 5% level of significance.  
+Even then model has an accuracy of 85%, not bad considering out training set consists only of 100 observations.
+
+## 4.3
+
+The simple model that classifies everything as 'digit' would be right 50% of the times and wrong 50% of the times. So it would have an accuracy score of .5
+
+The models in 4.1 and 4.2 have accuracy scores of .74 and .85 respectively. So we may say that they perform a lot better than the simple baseline model.   
+Although the model with five features is a bit complicated and it takes some time to compute, the performance is so better compared to the simple baseline model that we can overlook the complication.  
+And the model with the single feature also performs a lot better than the baseling model, but it is not that complicated. Of course the 5-fold cross validation takes some time, but it can be overlooked if we consider the gain in accuracy.
+
+## 4.4
+
+Let us design a simulation to find the answer to this question.  
+At first we generate a character randomly with all 10 being equally likely and note down if its a 'digit' or a 'letter'  
+Next, we generate one of the types i.e. 'digit' or 'letter' randomly with equal probability.  
+If the type of the randomly generated character(i.e 'digit' or 'letter') matches the generated type, we note that down.
+We do this a large number of times.
+Finally, we return the correct guesses divided by the total number of iterations, which is actually the accuracy score.
+
+```{r}
+set.seed(100)
+n = 100000
+simmed = sim(n, 5)
+print(paste("n =", n))
+print_pander(simmed, "Simulated model with accuracy scores")
+```
+
+So the mean accuracy is $.499$ which is approximately .5  
+So this model has an accuracy of 50%
+
+
+## 4.5
+
+The accuracy of the model by chance is 50% i.e. we will get about 50 correct predicitons out of 100 if we use the chance model. Whereas the model in 4.2 identified 85 chracters correctly. So this is a certainly much greater than the chance model. What remains to see is that if the accuracy of the logit model with five features is significantly greater than the chance model.  
+Here, the hypothesis we are testing is:  
+**H~0~: The distribution of the logit model and the chance model is the same** vs  
+**H~1~: The distributions of the two models arer not same**  
+
+We may use the binomial distribution for the purpose.
+If X ~ binomial(100, 0.5) then
+$P(X >= 85)$ gives be the probability that the number of correct answers exceeds 85, which is almost 0. This works as the p-value for the test.   
+The meaning of this is that it is highly unlikely that we will see an accuracy score of 85 or more if the distribution of the logit models is $binomial(100, .5)$  
+Thus we may conclude that the logit model is significantly better than the chance model.
+
+
+
+## 4.6
+
+We can view the confusion matrix from 4.2 for this section
+
+```{r}
+print_pander(conf2[[2]], "Confusion Matrix of 5-fold 
+            cross validated logit model(five features)")
+```
+
+It is seen from the Confusion matrix that out of 50 digits 41 are classified correctly and out of 50 letters 44 are classified correctly.  
+It is also observed that 9 of the digits are incorrectly classified as letters. And 6 of the letters are incorrectly classified as digits.  
+One interesting pattern we may be observing in this accuracy data is that the letters are more classified more correctly than the digits.
+
+## 4.7
+
+At first, we find the features for which there is significant difference among the 10 characters. We are using the reduced data set, the data set obtained after removing the highly correlated features in 3.2
+
+```{r}
+print_pander(multiple_test(data_reduced), "Features that show sig difference
+             between the characters.")
+```
+
+So we select *cols_with_1, none_below, tallness, bd and height* as the features to fit the model.  
+This time we will fit a *k-nearest-neighbor* model with 5-fold cross validation. The features are scaled before fitting the model.
+
+```{r}
+df_knn = data.frame(matrix(nrow = 100, ncol = 10))
+df_knn[, 1] = data_reduced$label
+colnames(df_knn) = colnames(data_reduced)[1:10]
+for( i in 2: 10){
+  df_knn[, i] = feature_scale(data_reduced[, i])
+}
+
+set.seed(1000)
+model_knn = train(label ~ cols_with_1 + none_below + tallness +
+                    bd + height, 
+                    data = df_knn, method = "knn", trControl = ctrl,
+                    tuneGrid = expand.grid(k = c(1, 3, 5, 9)),
+                    metric = "Accuracy")
+
+print_pander(model_knn[[4]][1:2], "Accuracy of the knn model for diff
+             values of k")
+```
+
+
+## 4.8
+
+Based on the accuracy results, we choose the model with k = 9
+
+Thus our final selected model is **k-nearest-neighbor** with **k = 9** and the features in the model are **cols_with_1, none_below, tallness, bd annd height*.  
+Since this value of k yields the greates accuracy, so it is chosen.
+The features are chosen keeping in mind that they had the most significance when tested for difference among the character. The more the difference of a feature from character to character, the better it can predict. Also they are not much correlated among themselves. These properties led us to the final model. Let us fit the final model to the data.
+
+```{r}
+set.seed(100)
+final_model = knn3(label ~ cols_with_1 + none_below + tallness + 
+                     bd + height, 
+                    data = df_knn, k = 9)
+final_model_preds = predict(final_model, newdata = df_knn, type = "class")
+
+tab = table(final_model_preds, df_knn$label)
+print_pander(tab, "Confusion Matrix of the final model")
+acc = sum(diag(tab)) / 100
+```
+
+
+
+```{r}
+print_pander(data.frame("Model" = "label~cols_with_1+none_below+
+                        tallness+bd+height", "Accuracy" = acc),
+             "Accuracy of the final model")
+```
+
+
+We observe that the final model identifies 8 '1's correctly, 8 '3's correctly, all 10 '4's correctly and so on. It had problems classifying the letter 'a', being correct only twice. So the accuracy of the final model is .66  
+This is a good accuracy even thought it is working on seen data, given that there are only 100 training observations and there are 10 classes to classify. So we can say that the overall performance of the final model is quite satisfactory.
+
+
+# Conclusions
+
+This was the assignment. It had multiple goals. We have done Feature Engineering, Statistical Analysis and Machine Learning in different sections of the assignment. The goal was to classify images of 10 characters, 5 digits and 5 letters based on features that were engineered by us.
+
+
+We calculated some interesting features, tested them statistically which finally led to building a machine learning model that predicted the characters.
+
+***
+
+
+### References:
+
+1. Kabacoff, RI 2015, *R in Action*, 2nd Ed, Manning, New York, US  
+2. Zumel N, Mount J, 2014, *Practical Data Science with R*, Manning, New York, Us
+
+
+
+
+
+
+

@@ -1,7 +1,6 @@
 ---
-title: "Report"
-author: "Joe"
-date: "29 July 2018"
+title: "Classifying digits and letters"
+author: "Zauad Shahreer Abeer"
 output:
   html_document:
     df_print: paged
